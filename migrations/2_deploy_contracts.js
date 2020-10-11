@@ -1,0 +1,6 @@
+const core_contract = artifacts.require("v0.1.0_core");
+
+
+module.exports = function(deployer) {
+  deployer.deploy(core_contract, '0x00000000000000000000000000000006r33nW00D', '0xf0d0eb522cfa50b716b3b1604c4f0fa6f04376ad', '0xC4375B7De8af5a38a93548eb8453a498222C4fF2','1000000000000000000', '1600000000', '20000000000', '750000', '10000000', '30000000', '850000000', '800000000', '2400000000', '90', '10000000000', '1');
+};
