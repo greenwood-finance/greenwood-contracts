@@ -107,11 +107,6 @@ liquidityAccounts: HashMap[address, liquidityAccountStruct]
 swaps: HashMap[bytes32, swapStruct]
 swapNumbers: public(HashMap[address, uint256])
 
-tmp1: public(bytes32)
-tmp2: public(bytes32)
-tmp3: public(Bytes[64])
-swapKeyReturn: public(bytes32)
-
 @external
 def __init__( _admin: address, _compound_addr:address, _token_addr:address, _mantissa: uint256, _y_offset: uint256, _slope_factor:uint256, _rate_factor_sensitivity: uint256, _fee_base: uint256, _fee_sensitivity: uint256, _range: uint256, _min_payout_rate: uint256, _max_payout_rate:uint256, _swap_duration: uint256, _initial_float_index: uint256, _supply_index: uint256):
     self.admin = _admin
@@ -211,9 +206,10 @@ def getFee() -> uint256:
 @internal
 def getRate(_swap_type: String[4], _order_notional: uint256) -> uint256:
     fee: decimal = convert(self.getFee(), decimal) / ETH_PRECISION
+    notionalAmount: decimal = convert(_order_notional, decimal) / self.mantissa
     rateFactorDelta: decimal = decimalZero
     if self.totalLiquidity != decimalZero:
-        rateFactorDelta = (convert(_order_notional, decimal) * (self.rateFactorSensitivity * self.swapDuration)) / self.totalLiquidity
+        rateFactorDelta = (notionalAmount * (self.rateFactorSensitivity * self.swapDuration)) / self.totalLiquidity
     if keccak256(_swap_type) == keccak256("pFix"):
         self.rateFactor += rateFactorDelta
     elif keccak256(_swap_type) == keccak256("rFix"):
@@ -294,11 +290,6 @@ def openPayFixedSwap(_notional_amount: uint256):
     self.swaps[swapKey].owner = msg.sender
     self.swaps[swapKey].initIndex = self.lastFloatIndex
     self.swaps[swapKey].userCollateral = userCollateral
-
-    self.tmp1 = convert(msg.sender, bytes32)
-    self.tmp2 = convert(self.swapNumbers[msg.sender], bytes32)
-    self.tmp3 = concat(self.tmp1,self.tmp2)
-    self.swapKeyReturn = swapKey
 
     self.swapNumbers[msg.sender] += 1
     self.orderNumber += 1
