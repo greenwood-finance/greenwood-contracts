@@ -1,3 +1,5 @@
+
+
 interface TOKEN:
     def balanceOf(_user: address) -> uint256: view
     def transfer(_to: address, _value: uint256) -> bool: nonpayable
@@ -142,7 +144,6 @@ def updateModel( _y_offset: uint256, _slope_factor:uint256, _rate_factor_sensiti
     self.rateRange = convert(_range, decimal) * CONTRACT_PRECISION
     self.minPayoutRate = convert(_min_payout_rate, decimal) * CONTRACT_PRECISION
     self.maxPayoutRate = convert(_max_payout_rate, decimal) * CONTRACT_PRECISION
-    self.maxPayoutRate = convert(_max_payout_rate, decimal) * CONTRACT_PRECISION
     self.isPaused = _is_paused
 
 @internal
@@ -269,7 +270,7 @@ def openPayFixedSwap(_notional_amount: uint256):
     self.updateProtocolActiveCollateral()
     timestampDecimal: decimal = convert(block.timestamp, decimal)
     self.lastCheckpointTime = timestampDecimal
-    notionalAmount: decimal = convert(_notional_amount, decimal)
+    notionalAmount: decimal = convert(_notional_amount, decimal) / self.mantissa
     swapFixedRate: decimal = convert(self.getRate("pFix", _notional_amount), decimal) / ETH_PRECISION
     newMaxFloatToPay:decimal = (notionalAmount * self.maxPayoutRate * self.swapDuration) / daysInYear
     newFixedToReceive: decimal = (swapFixedRate * self.swapDuration * notionalAmount) / daysInYear
@@ -309,7 +310,7 @@ def openReceiveFixedSwap(_notional_amount: uint256):
     self.updateProtocolActiveCollateral()
     timestampDecimal: decimal = convert(block.timestamp, decimal)
     self.lastCheckpointTime = timestampDecimal
-    notionalAmount: decimal = convert(_notional_amount, decimal)
+    notionalAmount: decimal = convert(_notional_amount, decimal) / self.mantissa
     swapFixedRate: decimal = convert(self.getRate("rFix", _notional_amount), decimal) / ETH_PRECISION
     newFixedToPay: decimal = (swapFixedRate * self.swapDuration * notionalAmount) / daysInYear
     newMinFloatAssetToReceive: decimal = (self.minPayoutRate * self.swapDuration * notionalAmount) / daysInYear
@@ -383,10 +384,10 @@ def closeSwap(_swap_key: bytes32):
     floatLeg:decimal = self.swaps[_swap_key].notional* (self.lastFloatIndex / self.swaps[_swap_key].initIndex - convert(1, decimal))
     if keccak256(self.swaps[_swap_key].swapType) == keccak256("pFix"):
         userProfit:decimal = floatLeg - fixedLeg
-        # self.tokenHandle.transfer(msg.sender, convert((userProfit + self.swaps[_order_number].userCollateral) * self.mantissa,uint256))
+        # self.tokenHandle.transfer(self.swaps[_swap_key].owner, convert((userProfit + self.swaps[_swap_key].userCollateral) * self.mantissa,uint256))
     else:
         userProfit:decimal = fixedLeg - floatLeg
-        # self.tokenHandle.transfer(msg.sender, convert((userProfit + self.swaps[_order_number].userCollateral) * self.mantissa,uint256))
+        # self.tokenHandle.transfer(self.swaps[_swap_key].owner, convert((userProfit + self.swaps[_swap_key].userCollateral) * self.mantissa,uint256))
     self.swaps[_swap_key].swapType = ""
     self.swaps[_swap_key].notional = decimalZero
     self.swaps[_swap_key].initTime = decimalZero
