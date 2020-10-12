@@ -1,4 +1,7 @@
-
+# (c) 2020 Greenwood
+# @title Greenwood Core
+# @author Brandon McFarland (Attribution: Max Wolff, http://maxcwolff.com/rhoSpec.pdf)
+# @notice An automated market maker for cryptocurrency interest rate swaps
 
 interface TOKEN:
     def balanceOf(_user: address) -> uint256: view
