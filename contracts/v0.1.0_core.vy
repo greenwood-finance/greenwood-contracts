@@ -9,9 +9,9 @@ interface TOKEN:
     def transferFrom(_from: address, _to: address, _value: uint256) -> bool: nonpayable
 
 interface COMPOUND:
-    def supplyRatePerBlock() -> uint256: view
+    def borrowRatePerBlock() -> uint256: view
 
-CONTRACT_PRECISION: constant(decimal) = .0000000001
+CONTRACT_PRECISION: constant(decimal) = 0.0000000001
 daysInYear: constant(decimal) = 360.0
 blocksPerDay: constant(decimal) = 5760.0
 decimalZero: constant(decimal) = 0.0
@@ -53,6 +53,9 @@ struct stateStruct:
     rateFactorSensitivity: int128
     feeBase: int128
     feeSensitivity: int128
+    rateRange: int128
+    utilizationInflection: int128
+    utilizationMultiplier: int128
     minPayoutRate: int128
     maxPayoutRate: int128
     lastCheckpointTime: int128
@@ -72,7 +75,6 @@ struct stateStruct:
     activeCollateral: int128
     swapDuration: int128
     rateFactor: int128
-    rateRange: int128
     orderNumber: int128
 
 admin: public(address)
@@ -84,6 +86,9 @@ slopeFactor: decimal
 rateFactorSensitivity: decimal
 feeBase: decimal
 feeSensitivity: decimal
+rateRange: decimal
+utilizationInflection: decimal
+utilizationMultiplier: decimal
 minPayoutRate: decimal
 maxPayoutRate: decimal
 lastCheckpointTime: decimal
@@ -103,7 +108,6 @@ notionalDaysReceivingFloat: decimal
 activeCollateral: decimal
 swapDuration: decimal
 rateFactor: decimal
-rateRange: decimal
 orderNumber: uint256
 isPaused: bool
 liquidityAccounts: HashMap[address, liquidityAccountStruct]
@@ -111,7 +115,7 @@ swaps: HashMap[bytes32, swapStruct]
 swapNumbers: public(HashMap[address, uint256])
 
 @external
-def __init__( _admin: address, _compound_addr:address, _token_addr:address, _mantissa: uint256, _y_offset: uint256, _slope_factor:uint256, _rate_factor_sensitivity: uint256, _fee_base: uint256, _fee_sensitivity: uint256, _range: uint256, _min_payout_rate: uint256, _max_payout_rate:uint256, _swap_duration: uint256, _initial_float_index: uint256, _supply_index: uint256):
+def __init__( _admin: address, _compound_addr:address, _token_addr:address, _mantissa: uint256, _y_offset: uint256, _slope_factor:uint256, _rate_factor_sensitivity: uint256, _fee_base: uint256, _fee_sensitivity: uint256, _range: uint256, _utilization_inflection: uint256, _utilization_multiplier: uint256, _min_payout_rate: uint256, _max_payout_rate:uint256, _swap_duration: uint256, _initial_float_index: uint256, _supply_index: uint256):
     self.admin = _admin
     self.compoundHandle = COMPOUND(_compound_addr)
     self.tokenHandle = TOKEN(_token_addr)
@@ -122,9 +126,11 @@ def __init__( _admin: address, _compound_addr:address, _token_addr:address, _man
     self.feeBase = convert(_fee_base, decimal) * CONTRACT_PRECISION
     self.feeSensitivity = convert(_fee_sensitivity, decimal) * CONTRACT_PRECISION
     self.rateRange = convert(_range, decimal) * CONTRACT_PRECISION
+    self.utilizationInflection = convert(_utilization_inflection, decimal) * CONTRACT_PRECISION
+    self.utilizationMultiplier = convert(_utilization_multiplier, decimal) * CONTRACT_PRECISION
     self.minPayoutRate = convert(_min_payout_rate, decimal) * CONTRACT_PRECISION
     self.maxPayoutRate = convert(_max_payout_rate, decimal) * CONTRACT_PRECISION
-    self.swapDuration = convert(_swap_duration, decimal)
+    self.swapDuration = convert(_swap_duration, decimal) / secondsPerDay
     self.lastFloatIndex = convert(_initial_float_index, decimal) * CONTRACT_PRECISION
     self.supplyIndex = convert(_supply_index, decimal)
     self.orderNumber = 1
@@ -132,7 +138,7 @@ def __init__( _admin: address, _compound_addr:address, _token_addr:address, _man
     self.lastCheckpointTime = convert(block.timestamp, decimal)
 
 @external
-def updateModel( _y_offset: uint256, _slope_factor:uint256, _rate_factor_sensitivity: uint256, _fee_base: uint256, _fee_sensitivity: uint256, _range: uint256, _min_payout_rate: uint256, _max_payout_rate:uint256, _is_paused: bool):
+def updateModel( _y_offset: uint256, _slope_factor:uint256, _rate_factor_sensitivity: uint256, _fee_base: uint256, _fee_sensitivity: uint256, _range: uint256, _utilization_inflection: uint256, _utilization_multiplier: uint256, _min_payout_rate: uint256, _max_payout_rate:uint256, _is_paused: bool):
     assert msg.sender == self.admin
     self.yOffset = convert(_y_offset, decimal) * CONTRACT_PRECISION
     self.slopeFactor = convert(_slope_factor, decimal) * CONTRACT_PRECISION
@@ -140,6 +146,8 @@ def updateModel( _y_offset: uint256, _slope_factor:uint256, _rate_factor_sensiti
     self.feeBase = convert(_fee_base, decimal) * CONTRACT_PRECISION
     self.feeSensitivity = convert(_fee_sensitivity, decimal) * CONTRACT_PRECISION
     self.rateRange = convert(_range, decimal) * CONTRACT_PRECISION
+    self.utilizationInflection = convert(_utilization_inflection, decimal) * CONTRACT_PRECISION
+    self.utilizationMultiplier = convert(_utilization_multiplier, decimal) * CONTRACT_PRECISION
     self.minPayoutRate = convert(_min_payout_rate, decimal) * CONTRACT_PRECISION
     self.maxPayoutRate = convert(_max_payout_rate, decimal) * CONTRACT_PRECISION
     self.isPaused = _is_paused
@@ -147,7 +155,7 @@ def updateModel( _y_offset: uint256, _slope_factor:uint256, _rate_factor_sensiti
 @internal
 @view
 def getFloatIndex() -> uint256:
-    rate: decimal = convert(self.compoundHandle.supplyRatePerBlock(), decimal)
+    rate: decimal = convert(self.compoundHandle.borrowRatePerBlock(), decimal)
     t0: decimal = rate / ETH_PRECISION * blocksPerDay + convert(1,decimal)
     t1: decimal = t0 * t0
     for i in range(357):
@@ -204,7 +212,11 @@ def getFee() -> uint256:
     if self.totalLiquidity == decimalZero:
         return convert(self.feeBase * ETH_PRECISION, uint256)
     else:
-        return convert((((self.activeCollateral * self.feeSensitivity)/self.totalLiquidity) + self.feeBase) * ETH_PRECISION, uint256)
+        if (self.activeCollateral / self.totalLiquidity) * 100.0 >= self.utilizationInflection:
+            feeMultiplier: decimal = self.feeSensitivity * self.utilizationMultiplier
+            return convert((((self.activeCollateral * feeMultiplier)/self.totalLiquidity) + self.feeBase) * ETH_PRECISION, uint256)
+        else:
+            return convert((((self.activeCollateral * self.feeSensitivity)/self.totalLiquidity) + self.feeBase) * ETH_PRECISION, uint256)
 
 @internal
 def getRate(_swap_type: String[4], _order_notional: uint256) -> uint256:
@@ -227,8 +239,10 @@ def addLiquidity(_deposit_amount: uint256):
     self.lastCheckpointTime = convert(block.timestamp, decimal)
     depositDecimal: decimal = convert(_deposit_amount, decimal) / self.mantissa
     accruedAmount: decimal = decimalZero
-    # assert self.tokenHandle.balanceOf(msg.sender) >= (convert(depositDecimal * self.mantissa, uint256))
-    # self.tokenHandle.transferFrom(msg.sender, self, convert(depositDecimal * self.mantissa, uint256))
+
+    assert self.tokenHandle.balanceOf(msg.sender) >= (convert(depositDecimal * self.mantissa, uint256))
+    self.tokenHandle.transferFrom(msg.sender, self, convert(depositDecimal * self.mantissa, uint256))
+    
     if self.liquidityAccounts[msg.sender].depositSupplyIndex != decimalZero:
         accruedAmount = max(((self.liquidityAccounts[msg.sender].amount * self.supplyIndex) / self.liquidityAccounts[msg.sender].depositSupplyIndex), decimalZero)
     newAccountLiquidity: decimal = depositDecimal + accruedAmount
@@ -255,7 +269,7 @@ def removeLiquidity(_withdraw_amount:uint256):
     assert withdrawAmount <= newAccountValue
     assert self.totalLiquidity > withdrawAmount
     assert (self.totalLiquidity - withdrawAmount) > self.activeCollateral
-    # self.tokenHandle.transfer(msg.sender, convert(withdrawAmount * self.mantissa, uint256))
+    self.tokenHandle.transfer(msg.sender, convert(withdrawAmount * self.mantissa, uint256))
     self.liquidityAccounts[msg.sender].amount = newAccountValue - withdrawAmount
     self.liquidityAccounts[msg.sender].lastDepositTime = convert(block.timestamp, decimal)
     self.liquidityAccounts[msg.sender].depositSupplyIndex = max(self.supplyIndex,decimalZero)
@@ -280,8 +294,10 @@ def openPayFixedSwap(_notional_amount: uint256):
     self.fixedToReceive += newFixedToReceive
     self.notionalDaysPayingFloat += notionalAmount * self.swapDuration
     userCollateral:decimal = (notionalAmount * self.swapDuration * (swapFixedRate - self.minPayoutRate)) / daysInYear
-    # assert self.tokenHandle.balanceOf(msg.sender) >= convert(userCollateral * self.mantissa, uint256)
-    # self.tokenHandle.transferFrom(msg.sender, self, convert(userCollateral * self.mantissa, uint256))
+
+    assert self.tokenHandle.balanceOf(msg.sender) >= convert(userCollateral * self.mantissa, uint256)
+    self.tokenHandle.transferFrom(msg.sender, self, convert(userCollateral * self.mantissa, uint256))
+
     self.lastFloatIndex = convert(self.getFloatIndex(), decimal) / ETH_PRECISION
 
     swapKey: bytes32 = keccak256(concat(convert(msg.sender, bytes32), convert(self.swapNumbers[msg.sender], bytes32)))
@@ -315,8 +331,10 @@ def openReceiveFixedSwap(_notional_amount: uint256):
     self.fixedToPay += newFixedToPay
     self.notionalDaysReceivingFloat += notionalAmount * self.swapDuration
     userCollateral: decimal = (notionalAmount * self.swapDuration * (self.maxPayoutRate - swapFixedRate)) / daysInYear
-    # assert self.tokenHandle.balanceOf(msg.sender) >= convert(userCollateral * self.mantissa, uint256)
-    # self.tokenHandle.transferFrom(msg.sender, self, convert(userCollateral * self.mantissa, uint256))
+
+    assert self.tokenHandle.balanceOf(msg.sender) >= convert(userCollateral * self.mantissa, uint256)
+    self.tokenHandle.transferFrom(msg.sender, self, convert(userCollateral * self.mantissa, uint256))
+
     self.lastFloatIndex = convert(self.getFloatIndex(), decimal) / ETH_PRECISION
 
     swapKey: bytes32 = keccak256(concat(convert(msg.sender, bytes32), convert(self.swapNumbers[msg.sender], bytes32)))
@@ -378,10 +396,10 @@ def closeSwap(_swap_key: bytes32):
     floatLeg:decimal = self.swaps[_swap_key].notional* (self.lastFloatIndex / self.swaps[_swap_key].initIndex - convert(1, decimal))
     if keccak256(self.swaps[_swap_key].swapType) == keccak256("pFix"):
         userProfit:decimal = floatLeg - fixedLeg
-        # self.tokenHandle.transfer(self.swaps[_swap_key].owner, convert((userProfit + self.swaps[_swap_key].userCollateral) * self.mantissa,uint256))
+        self.tokenHandle.transfer(self.swaps[_swap_key].owner, convert((userProfit + self.swaps[_swap_key].userCollateral) * self.mantissa,uint256))
     else:
         userProfit:decimal = fixedLeg - floatLeg
-        # self.tokenHandle.transfer(self.swaps[_swap_key].owner, convert((userProfit + self.swaps[_swap_key].userCollateral) * self.mantissa,uint256))
+        self.tokenHandle.transfer(self.swaps[_swap_key].owner, convert((userProfit + self.swaps[_swap_key].userCollateral) * self.mantissa,uint256))
     self.swaps[_swap_key].swapType = ""
     self.swaps[_swap_key].notional = decimalZero
     self.swaps[_swap_key].initTime = decimalZero
@@ -402,6 +420,9 @@ def getState() -> stateStruct:
     contractState.rateFactorSensitivity = convert(self.rateFactorSensitivity / CONTRACT_PRECISION, int128)
     contractState.feeBase = convert(self.feeBase / CONTRACT_PRECISION, int128)
     contractState.feeSensitivity = convert(self.feeSensitivity / CONTRACT_PRECISION, int128)
+    contractState.rateRange = convert(self.rateRange / CONTRACT_PRECISION, int128)
+    contractState.utilizationInflection = convert(self.utilizationInflection / CONTRACT_PRECISION, int128)
+    contractState.utilizationMultiplier = convert(self.utilizationMultiplier / CONTRACT_PRECISION, int128)
     contractState.minPayoutRate = convert(self.minPayoutRate / CONTRACT_PRECISION, int128)
     contractState.maxPayoutRate = convert(self.maxPayoutRate / CONTRACT_PRECISION, int128)
     contractState.lastCheckpointTime = convert(self.lastCheckpointTime / CONTRACT_PRECISION, int128)
@@ -421,7 +442,6 @@ def getState() -> stateStruct:
     contractState.activeCollateral = convert(self.activeCollateral / CONTRACT_PRECISION, int128)
     contractState.swapDuration = convert(self.swapDuration / CONTRACT_PRECISION, int128)
     contractState.rateFactor = convert(self.rateFactor / CONTRACT_PRECISION, int128)
-    contractState.rateRange = convert(self.rateRange / CONTRACT_PRECISION, int128)
     contractState.orderNumber = convert(self.orderNumber, int128)
     return contractState
 
