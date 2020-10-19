@@ -15,6 +15,7 @@ struct modelStruct:
     minPayoutRate: int128
     maxPayoutRate:int128
     isPaused: bool
+    closeSwapOverride: bool
 
 admin: address
 yOffset: int128
@@ -28,9 +29,10 @@ utilizationMultiplier: int128
 minPayoutRate: int128
 maxPayoutRate: int128
 isPaused: bool
+closeSwapOverride:bool
 
 @external
-def __init__(_admin_addr:address, _y_offset: int128, _slope_factor:int128, _rate_factor_sensitivity: int128, _fee_base: int128, _fee_sensitivity: int128, _range: int128, _utilization_inflection: int128, _utilization_multiplier: int128, _min_payout_rate: int128, _max_payout_rate:int128, _is_paused: bool):
+def __init__(_admin_addr:address, _y_offset: int128, _slope_factor:int128, _rate_factor_sensitivity: int128, _fee_base: int128, _fee_sensitivity: int128, _range: int128, _utilization_inflection: int128, _utilization_multiplier: int128, _min_payout_rate: int128, _max_payout_rate:int128, _is_paused: bool, _close_swap_override: bool):
     self.admin = _admin_addr
     self.yOffset = _y_offset
     self.slopeFactor = _slope_factor
@@ -43,6 +45,7 @@ def __init__(_admin_addr:address, _y_offset: int128, _slope_factor:int128, _rate
     self.minPayoutRate = _min_payout_rate
     self.maxPayoutRate = _max_payout_rate
     self.isPaused = _is_paused
+    self.closeSwapOverride = _close_swap_override
 
 @external
 @view
@@ -59,11 +62,12 @@ def getModel() -> modelStruct:
     currentModel.minPayoutRate = self.minPayoutRate
     currentModel.maxPayoutRate = self.maxPayoutRate
     currentModel.isPaused = self.isPaused
+    currentModel.closeSwapOverride = self.closeSwapOverride
 
     return currentModel
 
 @external
-def setModel( _y_offset: int128, _slope_factor:int128, _rate_factor_sensitivity: int128, _fee_base: int128, _fee_sensitivity: int128, _range: int128, _utilization_inflection: int128, _utilization_multiplier: int128, _min_payout_rate: int128, _max_payout_rate:int128, _is_paused: bool):
+def setModel( _y_offset: int128, _slope_factor:int128, _rate_factor_sensitivity: int128, _fee_base: int128, _fee_sensitivity: int128, _range: int128, _utilization_inflection: int128, _utilization_multiplier: int128, _min_payout_rate: int128, _max_payout_rate:int128, _is_paused: bool, _close_swap_override: bool):
     assert msg.sender == self.admin
     self.yOffset = _y_offset
     self.slopeFactor = _slope_factor
@@ -76,3 +80,4 @@ def setModel( _y_offset: int128, _slope_factor:int128, _rate_factor_sensitivity:
     self.minPayoutRate = _min_payout_rate
     self.maxPayoutRate = _max_payout_rate
     self.isPaused = _is_paused
+    self.closeSwapOverride = _close_swap_override

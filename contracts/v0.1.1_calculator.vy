@@ -23,7 +23,7 @@ def getFloatIndex() -> uint256:
     rate: decimal = convert(self.compoundHandle.borrowRatePerBlock(), decimal)
     t0: decimal = rate / ETH_PRECISION * blocksPerDay + convert(1,decimal)
     t1: decimal = t0 * t0
-    for i in range(357):
+    for i in range(362):
         t1 = t1 * t0
     t2: decimal = t1 - convert(1, decimal)
     t3: decimal = t2 * convert(100,decimal)
