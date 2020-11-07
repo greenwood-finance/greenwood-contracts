@@ -6,10 +6,10 @@
 interface COMPOUND:
     def borrowRatePerBlock() -> uint256: view
 
-blocksPerDay: constant(decimal) = 5760.0
+BLOCKS_PER_DAY: constant(decimal) = 5760.0
 ETH_PRECISION: constant(decimal) = 1000000000000000000.0
 CONTRACT_PRECISION: constant(decimal) = 0.0000000001
-decimalZero: constant(decimal) = 0.0
+DECIMAL_ZERO: constant(decimal) = 0.0
 
 compoundHandle: COMPOUND
 
@@ -21,7 +21,7 @@ def __init__(_compound_addr:address):
 @view
 def getFloatIndex() -> uint256:
     rate: decimal = convert(self.compoundHandle.borrowRatePerBlock(), decimal)
-    t0: decimal = rate / ETH_PRECISION * blocksPerDay + convert(1,decimal)
+    t0: decimal = rate / ETH_PRECISION * BLOCKS_PER_DAY + 1.0
     t1: decimal = t0 * t0
     for i in range(362):
         t1 = t1 * t0
@@ -39,11 +39,13 @@ def getFee(_total_liquidity: int128, _fee_base: int128, _active_collateral: int1
     feeSensitivity: decimal = convert(_fee_sensitivity, decimal) * CONTRACT_PRECISION
     utilizationMultiplier: decimal = convert(_utilization_multiplier, decimal) * CONTRACT_PRECISION
 
-    if totalLiquidity == decimalZero:
+    if totalLiquidity == DECIMAL_ZERO:
         return convert(feeBase * ETH_PRECISION, uint256)
     else:
-        if (activeCollateral / totalLiquidity) * 100.0 >= utilizationInflection:
+        utilization: decimal = activeCollateral / totalLiquidity
+        if utilization > utilizationInflection:
             feeMultiplier: decimal = feeSensitivity * utilizationMultiplier
-            return convert((((activeCollateral * feeMultiplier) / totalLiquidity) + feeBase) / CONTRACT_PRECISION, uint256)
+            return convert(((utilization * feeSensitivity + feeBase) + ((utilization - utilizationInflection) * feeMultiplier)) / CONTRACT_PRECISION, uint256)
+
         else:
-            return convert((((activeCollateral * feeSensitivity) / totalLiquidity) + feeBase) / CONTRACT_PRECISION, uint256)
+            return convert((utilization * feeSensitivity + feeBase) / CONTRACT_PRECISION, uint256)
