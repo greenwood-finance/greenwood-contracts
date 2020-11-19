@@ -1,6 +1,6 @@
 # (c) 2020 Greenwood
 # @title Greenwood Calculator
-# @author Brandon McFarland
+# @author Greenwood
 # @notice An external calculation contract for the Greenwood protocol
 
 interface COMPOUND:

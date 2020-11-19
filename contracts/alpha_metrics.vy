@@ -1,6 +1,6 @@
 # (c) 2020 Greenwood
 # @title Greenwood Metrics
-# @author Brandon McFarland
+# @author Greenwood
 # @notice A swap metric storage contract for the Greenwood protocol
 
 CONTRACT_PRECISION: constant(decimal) = 0.0000000001

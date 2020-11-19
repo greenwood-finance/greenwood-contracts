@@ -1,15 +1,17 @@
 # (c) 2020 Greenwood
-# @title Greenwood Core
+# @title Greenwood Core (USDT)
 # @author Greenwood (Attribution: Max Wolff, http://maxcwolff.com/rhoSpec.pdf)
 # @notice An automated market maker for cryptocurrency interest rate swaps
 
 interface TOKEN:
     def balanceOf(_user: address) -> uint256: view
-    def transfer(_to: address, _value: uint256) -> bool: nonpayable
-    def transferFrom(_from: address, _to: address, _value: uint256) -> bool: nonpayable
+    def transfer(_to: address, _value: uint256): nonpayable
+    def transferFrom(_from: address, _to: address, _value: uint256): nonpayable
+
 
 interface CALCULATOR:
-    def getFloatIndex() -> uint256: view
+    def getBorrowIndex() -> uint256: view
+    def getBorrowApy() -> uint256: nonpayable
     def getFee(_total_liquidity: int128, _fee_base: int128, _active_collateral: int128, _utilization_inflection: int128, _fee_sensitivity: int128, _utilization_multiplier: int128) -> uint256: view
 
 interface SWAP_METRICS:
@@ -91,7 +93,7 @@ notionalReceivingFixed: decimal
 avgFixedRatePaying: decimal
 notionalPayingFixed:decimal
 notionalPayingFloat: decimal
-lastFloatIndex: decimal
+lastBorrowIndex: decimal
 notionalReceivingFloat: decimal
 totalLiquidity: decimal
 fixedToPay: decimal
@@ -128,7 +130,7 @@ def __init__(
         _utilization_multiplier: uint256, 
         _min_payout_rate: uint256,
         _max_payout_rate: uint256,
-        _float_index: uint256,
+        _borrow_index: uint256,
         _close_period: uint256
     ):
 
@@ -151,7 +153,7 @@ def __init__(
     self.utilizationMultiplier = convert(_utilization_multiplier, decimal) * CONTRACT_PRECISION
     self.minPayoutRate = convert(_min_payout_rate, decimal) * CONTRACT_PRECISION
     self.maxPayoutRate = convert(_max_payout_rate, decimal) * CONTRACT_PRECISION
-    self.lastFloatIndex = convert(_float_index, decimal) * CONTRACT_PRECISION
+    self.lastBorrowIndex = convert(_borrow_index, decimal) * CONTRACT_PRECISION
     self.closePeriodInDays = convert(_close_period, decimal) / SECONDS_PER_DAY
     
     self.supplyIndex = 1.0
@@ -195,10 +197,10 @@ def accrueProtocolCashflowAndUpdateActiveCollateral(
     ):
 
     accruedDays: decimal = (convert(block.timestamp, decimal) - self.lastCheckpointTime) / SECONDS_PER_DAY
-    newFloatIndex: decimal = convert(self.calculatorHandle.getFloatIndex(), decimal) / ETH_PRECISION
+    newBorrowIndex: decimal = convert(self.calculatorHandle.getBorrowIndex(), decimal) / ETH_PRECISION
 
     cachedNotionalReceivingFixed: decimal = self.notionalReceivingFixed
-    cachedLastFloatIndex: decimal = self.lastFloatIndex
+    cachedLastBorrowIndex: decimal = self.lastBorrowIndex
     cachedTotalLiquidity: decimal = self.totalLiquidity
     cachedSupplyIndex: decimal = self.supplyIndex
     cachedNotionalPayingFixed: decimal = self.notionalPayingFixed
@@ -207,8 +209,8 @@ def accrueProtocolCashflowAndUpdateActiveCollateral(
 
     fixedReceived: decimal = (self.avgFixedRateReceiving * cachedNotionalReceivingFixed * accruedDays) / DAYS_IN_YEAR
     fixedPaid: decimal = (self.avgFixedRatePaying * cachedNotionalPayingFixed * accruedDays) / DAYS_IN_YEAR
-    floatPaid: decimal = cachedNotionalPayingFloat * (newFloatIndex / cachedLastFloatIndex - 1.0)
-    floatReceived: decimal = cachedNotionalReceivingFloat * (newFloatIndex / cachedLastFloatIndex - 1.0)
+    floatPaid: decimal = cachedNotionalPayingFloat * (newBorrowIndex / cachedLastBorrowIndex - 1.0)
+    floatReceived: decimal = cachedNotionalReceivingFloat * (newBorrowIndex / cachedLastBorrowIndex - 1.0)
     profitAccrued: decimal = fixedReceived + floatReceived - fixedPaid - floatPaid
 
     if cachedTotalLiquidity == DECIMAL_ZERO:
@@ -224,9 +226,9 @@ def accrueProtocolCashflowAndUpdateActiveCollateral(
     self.fixedToPay -= max(fixedPaid, DECIMAL_ZERO)
     self.fixedToReceive -= max(fixedReceived, DECIMAL_ZERO)
     
-    if cachedLastFloatIndex != DECIMAL_ZERO:
-        self.notionalPayingFloat = cachedNotionalPayingFloat * (newFloatIndex / cachedLastFloatIndex)
-        self.notionalReceivingFloat = cachedNotionalReceivingFloat * (newFloatIndex / cachedLastFloatIndex)
+    if cachedLastBorrowIndex != DECIMAL_ZERO:
+        self.notionalPayingFloat = cachedNotionalPayingFloat * (newBorrowIndex / cachedLastBorrowIndex)
+        self.notionalReceivingFloat = cachedNotionalReceivingFloat * (newBorrowIndex / cachedLastBorrowIndex)
     
     if _update_active_collateral == True:
         self.notionalDaysPayingFloat -= max(cachedNotionalReceivingFixed * accruedDays, DECIMAL_ZERO)
@@ -235,7 +237,7 @@ def accrueProtocolCashflowAndUpdateActiveCollateral(
         maxFloatToPay: decimal = (self.maxPayoutRate * self.notionalDaysPayingFloat) / DAYS_IN_YEAR
         self.activeCollateral = max(self.fixedToPay + maxFloatToPay - self.fixedToReceive - minFloatToReceive, DECIMAL_ZERO)
 
-    self.lastFloatIndex = newFloatIndex
+    self.lastBorrowIndex = newBorrowIndex
 
 @internal
 def getRate(
@@ -404,7 +406,7 @@ def openSwap(
         self.swaps[swapKey].initTime = cachedTimestamp
         self.swaps[swapKey].swapRate = swapFixedRate
         self.swaps[swapKey].owner = msg.sender
-        self.swaps[swapKey].initIndex = self.lastFloatIndex
+        self.swaps[swapKey].initIndex = self.lastBorrowIndex
         self.swaps[swapKey].userCollateral = userCollateral
 
         self.swapNumbers[msg.sender] = cachedSwapNumber + 1
@@ -432,12 +434,13 @@ def closeSwap(
         cachedSwapType: String[4] = self.swaps[_swap_key].swapType
         cachedSwapUserCollateral: decimal = self.swaps[_swap_key].userCollateral
         cachedSwapInitTime: decimal = self.swaps[_swap_key].initTime
+        cachedSwapInitIndex: decimal = self.swaps[_swap_key].initIndex
         cachedNotionalPayingFixed: decimal = self.notionalPayingFixed
         cachedMantissa: decimal = self.mantissa
         cachedMinPayoutRate: decimal = self.minPayoutRate
         cachedTimestamp: decimal = convert(block.timestamp, decimal)
 
-        newFloatIndex:decimal = self.lastFloatIndex
+        newBorrowIndex:decimal = self.lastBorrowIndex
         liquidationEnd: decimal = cachedSwapInitTime + (cachedSwapDuration * SECONDS_PER_DAY) + (self.closePeriodInDays * SECONDS_PER_DAY)
         swapLength: decimal = cachedTimestamp - cachedSwapInitTime
 
@@ -455,7 +458,7 @@ def closeSwap(
                 self.avgFixedRateReceiving = max(((self.avgFixedRateReceiving * cachedNotionalReceivingFixed - cachedSwapRate * cachedSwapNotional) / newNotionalReceiving), DECIMAL_ZERO)
 
             self.notionalReceivingFixed = max(self.notionalReceivingFixed - cachedSwapNotional, DECIMAL_ZERO)
-            self.notionalPayingFloat -= max((self.notionalPayingFloat - ((cachedSwapNotional * newFloatIndex) / self.swaps[_swap_key].initIndex)), DECIMAL_ZERO)
+            self.notionalPayingFloat -= max((self.notionalPayingFloat - ((cachedSwapNotional * newBorrowIndex) / cachedSwapInitIndex)), DECIMAL_ZERO)
             self.fixedToReceive = max((self.fixedToReceive + ((cachedSwapNotional * cachedSwapRate * lateDays) / DAYS_IN_YEAR)), DECIMAL_ZERO)
             self.notionalDaysPayingFloat = max((self.notionalDaysPayingFloat + (cachedSwapNotional * lateDays)), DECIMAL_ZERO)
 
@@ -468,12 +471,20 @@ def closeSwap(
                 self.avgFixedRatePaying = max(((self.avgFixedRatePaying * cachedNotionalPayingFixed - cachedSwapRate * cachedSwapNotional) / newNotionalPaying), DECIMAL_ZERO)
 
             self.notionalPayingFixed = max((self.notionalPayingFixed - cachedSwapNotional), DECIMAL_ZERO)
-            self.notionalReceivingFloat = max((self.notionalReceivingFloat - ((cachedSwapNotional * newFloatIndex) / self.swaps[_swap_key].initIndex)), DECIMAL_ZERO)
+            self.notionalReceivingFloat = max((self.notionalReceivingFloat - ((cachedSwapNotional * newBorrowIndex) / cachedSwapInitIndex)), DECIMAL_ZERO)
             self.fixedToPay = max((self.fixedToPay + ((cachedSwapNotional * cachedSwapRate * lateDays) / DAYS_IN_YEAR)), DECIMAL_ZERO)
             self.notionalDaysReceivingFloat += max((self.notionalDaysReceivingFloat + (cachedSwapNotional * lateDays)), DECIMAL_ZERO)
 
         fixedLeg:decimal = (cachedSwapNotional * cachedSwapRate * cachedSwapDuration) / DAYS_IN_YEAR
-        floatLeg: decimal =  (cachedSwapNotional * (newFloatIndex / 100.0) * cachedSwapDuration) / DAYS_IN_YEAR
+        floatLeg: decimal = DECIMAL_ZERO
+
+        swapFloatRate: decimal = DECIMAL_ZERO
+        if newBorrowIndex / cachedSwapInitIndex == 1.0:
+            swapFloatRate = convert(self.calculatorHandle.getBorrowApy(), decimal) / ETH_PRECISION
+            floatLeg = (cachedSwapNotional * swapFloatRate * cachedSwapDuration) / DAYS_IN_YEAR
+        else:
+            swapFloatRate = (newBorrowIndex / cachedSwapInitIndex - 1.0)
+            floatLeg = cachedSwapNotional * swapFloatRate
 
         if cachedTimestamp <= liquidationEnd:
             if keccak256(cachedSwapType) == keccak256("pFix"):
@@ -492,7 +503,7 @@ def closeSwap(
                     self.tokenHandle.transfer(self.swaps[_swap_key].owner, convert((amountToSend + cachedSwapUserCollateral) * cachedMantissa, uint256))
 
             elif keccak256(cachedSwapType) == keccak256("rFix"):
-                if (newFloatIndex / 100.0) < cachedMinPayoutRate:
+                if swapFloatRate < cachedMinPayoutRate:
                     floatLeg = (cachedSwapNotional * cachedMinPayoutRate * cachedSwapDuration) / DAYS_IN_YEAR
 
                 userProfit: decimal = fixedLeg - floatLeg
